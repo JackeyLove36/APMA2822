@@ -1,7 +1,5 @@
 all: 
-	g++ blockingMMM.cpp -o blockingMMM
-	g++ matrixMatrixMult.cpp -o matrixMatrixMult
-	g++ parallelMatrixMatrixMult.cpp -o parallelMatrixMatrixMult
+	g++ -O0 matrixMatrixMult.cpp -o matrixMatrixMult
 
 clean:
-	rm -fv blockingMMM matrixMatrixMult parallelMatrixMatrixMult
+	rm -fv matrixMatrixMult

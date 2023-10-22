@@ -1,0 +1,26 @@
+module: loading 'cuda/12.2.2'
+module: cuda: To use: module load gcc/10.2
+module: loading 'gcc/10.2'
+module: gcc: "Note: loading the gcc module overrides the gcc version on the system.  If you want to revert to the version of gcc provided by the OS, unload the gcc module."
+==143959== NVPROF is profiling process 143959, command: ./output/secDeriv
+==143959== Profiling application: ./output/secDeriv
+==143959== Profiling result:
+            Type  Time(%)      Time     Calls       Avg       Min       Max  Name
+ GPU activities:   42.39%  2.8480us         1  2.8480us  2.8480us  2.8480us  second_deriv_kernel(double*, double*, double*, double, double, int)
+                   29.04%  1.9510us         1  1.9510us  1.9510us  1.9510us  [CUDA memcpy DtoH]
+                   28.58%  1.9200us         2     960ns     832ns  1.0880us  [CUDA memcpy HtoD]
+      API calls:   93.79%  101.65ms         1  101.65ms  101.65ms  101.65ms  cudaSetDevice
+                    5.34%  5.7822ms         1  5.7822ms  5.7822ms  5.7822ms  cudaLaunchKernel
+                    0.57%  618.08us       114  5.4210us     119ns  333.23us  cuDeviceGetAttribute
+                    0.20%  218.67us         3  72.889us  1.9660us  210.28us  cudaMalloc
+                    0.05%  58.664us         3  19.554us  6.2990us  29.981us  cudaMemcpy
+                    0.02%  23.157us         1  23.157us  23.157us  23.157us  cuDeviceGetName
+                    0.01%  11.451us         2  5.7250us  2.5000us  8.9510us  cudaFree
+                    0.01%  5.6540us         1  5.6540us  5.6540us  5.6540us  cudaDeviceSynchronize
+                    0.00%  5.2030us         1  5.2030us  5.2030us  5.2030us  cuDeviceGetPCIBusId
+                    0.00%  1.7040us         3     568ns     172ns  1.3390us  cuDeviceGetCount
+                    0.00%  1.6390us         1  1.6390us  1.6390us  1.6390us  cudaGetDeviceCount
+                    0.00%     548ns         2     274ns     135ns     413ns  cuDeviceGet
+                    0.00%     505ns         1     505ns     505ns     505ns  cuDeviceGetUuid
+                    0.00%     419ns         1     419ns     419ns     419ns  cuDeviceTotalMem
+                    0.00%     301ns         1     301ns     301ns     301ns  cuModuleGetLoadingMode

@@ -10,4 +10,4 @@
 #SBATCH -o MyMPIJob-%j.out
 #SBATCH -e MyMPIJob-%j.out
 
-./matrixMatrixMulti
+./matrixMatrixMult
