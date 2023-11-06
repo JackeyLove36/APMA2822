@@ -1,0 +1,59 @@
+## SLURM PROLOG ###############################################################
+##    Job ID : 11973150
+##  Job Name : run.sh
+##  Nodelist : gpu1403
+##      CPUs : 1
+##   Mem/CPU : 2800 MB
+## Directory : /oscar/home/sanand14/APMA2822B/HW3
+##   Job Started : Mon Nov  6 16:33:53 EST 2023
+###############################################################################
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+KErnResult: 0.000000
+Result: 2.000000
+Vector has been saved to outputs/result.txt
+Mean of matrix is: 0.00254338
+Matrix has been saved to outputs/latex.txt
