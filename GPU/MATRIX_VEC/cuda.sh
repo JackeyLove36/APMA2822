@@ -14,10 +14,9 @@
 #SBATCH -e with_gpu.err
 
 # Load CUDA module
-module load cuda/12.2.2  gcc/10.2
-nvidia-smi
+module load cuda/12.2.2  gcc/10.2   
 
 # Compile CUDA program and run
 #nvcc -arch sm_20 vecadd.cu -o vecadd
-nvcc -O2 secDeriv.cu -o output/secDeriv
-nvprof ./output/secDeriv
+nvcc -O2 dot.cu -o dot
+./dot

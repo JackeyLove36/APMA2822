@@ -7,94 +7,205 @@
 #include <cmath>
 #include <cuda.h>
 #include <stdio.h>
+#include <string>
 
 #define FULL_MASK 0xffffffff
 #define WARP_SIZE 32
-#define IDX2C(r,c,nr) (((c)*(nr))+(r))
 
-__global__ void testKernel() {
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("Test Kernel Running\n");
-    }
+__device__ double atomicAddDouble(double* address, double val) {
+    unsigned long long int* address_as_ull = (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_ull, assumed, 
+                        __double_as_longlong(val + __longlong_as_double(assumed)));
+    } while (assumed != old);
+
+    return __longlong_as_double(old);
 }
 
-
 __global__
-void mvKernel(double* matrix, double* vector, 
+void mvKernelNoWarp(double* matrix, double* vector, 
               int numRowsM, int vecLength,
               double* result) {
-  int row = threadIdx.x + blockIdx.x*blockDim.x;
-  int lane = threadIdx.x % WARP_SIZE;
-  printf("Kernel is running on row %d\n", row);
-
-  double sum = 0.0;
+  int row = threadIdx.x + blockIdx.x * blockDim.x;
   if (row < numRowsM) {
-    for (int col = threadIdx.y; col < vecLength; col += WARP_SIZE) {
+    for (int col = 0; col < vecLength; col ++) {
       if (col < vecLength) {
-        sum += matrix[IDX2C(row, col, numRowsM)] * vector[col];
+        result[row] += matrix[row*vecLength + col] * vector[col];
       }
     }
   }
-  __syncwarp();
-  // Use warp-level parallel reduction to sum the contributions from all threads in the warp
-  for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+}
+
+__global__
+void mvKernelSingleWarp(double* matrix, double* vector, 
+              int numRowsM, int vecLength,
+              double* result) {
+
+  int row = blockIdx.x;
+  int lane = (threadIdx.x) % WARP_SIZE;
+  double sum = 0.0;
+
+  if (row < numRowsM) {
+    for (int col = lane; col < vecLength; col += WARP_SIZE) { // modulus addition
+      if (col < vecLength) {
+        sum += matrix[row*vecLength + col] * vector[col];
+      }
+    }
+
+    __syncwarp();
+    for (int offset = WARP_SIZE/2; offset > 0; offset /= 2) {
       sum += __shfl_down_sync(FULL_MASK, sum, offset);
-  }
-  __shared__ double s_mem[1024/WARP_SIZE];
-
-  int nwarps = blockDim.x/WARP_SIZE;
-  int warpId = threadIdx.x/WARP_SIZE;
-  if (lane == 0) {
-    s_mem[warpId] = sum;
-    printf("smem = %f\n", s_mem[warpId]);
-  }
-
-  __syncthreads();
-  if (threadIdx.x == 0) {
-    printf("nwarps = %d\n", nwarps);
-    result[row] = sum;
+    }
+    if (lane == 0) {
+      result[row] = sum;
+    }
   }
 }
 
-void matVecMul(double* mat_h, double* vec_h, double* result_h, int numRowsM, int vecLength) {
+__global__
+void mvKernelMultipleWarps(double* matrix, double* vector, 
+              int numRowsM, int vecLength,
+              double* result) {
+
+  int row = blockIdx.x;
+  int lane = threadIdx.x % WARP_SIZE;
+  int warpid = threadIdx.x/WARP_SIZE;
+  int nwarps = blockDim.x/WARP_SIZE;
+
+  double sum = 0.0;
+
+  if (row < numRowsM) {
+    for (int col = lane + WARP_SIZE*warpid; col < vecLength; col += WARP_SIZE*nwarps) { // modulus addition
+      if (col < vecLength) {
+        sum += matrix[row*vecLength + col] * vector[col];
+      }
+    }
+    __syncwarp();
+    for (int offset = WARP_SIZE/2; offset > 0; offset /= 2) {
+      sum += __shfl_down_sync(FULL_MASK, sum, offset);
+    }
+
+    __shared__ double s_mem[1024/WARP_SIZE]; // max 32 warps per block 
+    if (lane == 0) {
+      s_mem[warpid] = sum;
+    }
+
+    __syncthreads(); // sync threads within block
+    if (threadIdx.x == 0) { // first lane in first warp
+      for (int j = 0; j < nwarps; ++j) {
+        result[row] += s_mem[j];
+      }   
+    }
+  }
+}
+
+__global__
+void mvKernelMultRowsSingleThreadBlock(double* matrix, double* vector, 
+              int numRowsM, int vecLength,double* result) {
+  int row = blockDim.x/WARP_SIZE * blockIdx.x + threadIdx.x/WARP_SIZE;
+  int lane = threadIdx.x % WARP_SIZE;
+  double sum = 0.0;
+
+  if (row < numRowsM) {
+    for (int col = lane; col < vecLength; col += WARP_SIZE) { // modulus addition
+      if (col < vecLength) {
+        sum += matrix[row*vecLength + col] * vector[col];
+      }
+    }
+    __syncwarp();
+    for (int offset = WARP_SIZE/2; offset > 0; offset /= 2) {
+      sum += __shfl_down_sync(FULL_MASK, sum, offset);
+    }
+    if (lane == 0) {
+      result[row] = sum;
+    }
+  }
+}
+
+__global__
+void mvKernelColStrat(double* matrix, double* vector, 
+              int numRowsM, int vecLength,
+              double* result) {
+  int numBlocksPerRow = gridDim.x/numRowsM; 
+  int row = blockIdx.x/numBlocksPerRow;
+  int rowId = blockIdx.x % numBlocksPerRow;
+  int lane = threadIdx.x % WARP_SIZE;
+  int nwarpsPerBlock = blockDim.x/WARP_SIZE;
+  int warpid = threadIdx.x/WARP_SIZE + rowId * nwarpsPerBlock;
+  // two blocks per row here
+  double sum = 0.0;
+  if (row < numRowsM) {
+    for (int col = lane + WARP_SIZE*warpid; col < vecLength; col += WARP_SIZE*nwarpsPerBlock) { // modulus addition
+      if (col < vecLength) {
+        sum += matrix[row*vecLength + col] * vector[col];
+      }
+    }
+    __syncwarp();
+    for (int offset = WARP_SIZE/2; offset > 0; offset /= 2) {
+      sum += __shfl_down_sync(FULL_MASK, sum, offset);
+    }
+
+    __shared__ double s_mem[1024/WARP_SIZE]; // max 32 warps per block 
+    if (lane == 0) {
+      s_mem[warpid] = sum;
+    }
+
+    __syncthreads(); // sync threads within block
+    if (threadIdx.x == 0) && ((blockIdx.x % numBlocksPerRow) == 0) { // first lane in first warp
+      for (int j = 0; j < nwarpsPerBlock; ++j) {
+        result[row] += s_mem[j];
+      }   
+    }
+  }
+}
+
+void matVecMul(double* mat_h, double* vec_h, double* result_h, int numRowsM, int vecLength, int option) {
     double *mat_d, *vec_d, *result_d;
 
-    cudaMalloc((void**)&mat_d, numRowsM * vecLength * sizeof(double));
-    cudaMalloc((void**)&vec_d, vecLength * sizeof(double));
-    cudaMalloc((void**)&result_d, numRowsM * sizeof(double));
+    cudaMalloc(&mat_d, numRowsM * vecLength * sizeof(double));
+    cudaMalloc(&vec_d, vecLength * sizeof(double));
+    cudaMalloc(&result_d, numRowsM * sizeof(double));
 
     // Copy data from host to device
     cudaMemcpy(mat_d, mat_h, numRowsM * vecLength * sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(vec_d, vec_h, vecLength * sizeof(double), cudaMemcpyHostToDevice);
 
-    // Kernel launch - one warp per row
-    dim3 nthreads(256,1,1);
-    dim3 nblocks( (numRowsM+nthreads.x-1)/nthreads.x,1,1);
-    testKernel<<<1, 1>>>();
-    printf("KErn");
-    //mvKernel<<<nthreads, nblocks>>>(mat_d, vec_d, numRowsM, vecLength, result_d);
+    if (option == 0) {
+      dim3 nthreads(256,1,1);
+      dim3 nblocks( (numRowsM+nthreads.x-1)/nthreads.x,1,1);
+      mvKernelNoWarp<<<nblocks, nthreads>>>(mat_d, vec_d, numRowsM, vecLength, result_d);
+    } else if (option == 1) {
+      dim3 nthreads(WARP_SIZE,1,1);
+      dim3 nblocks(numRowsM,1,1);
+      mvKernelSingleWarp<<<nblocks, nthreads>>>(mat_d, vec_d, numRowsM, vecLength, result_d);
+    } else if (option == 2){
+      int nwarps = 32; // max 32 nwarps per block
+      dim3 nthreads(WARP_SIZE * nwarps,1,1);
+      dim3 nblocks(numRowsM,1,1);
+      mvKernelMultipleWarps<<<nblocks, nthreads>>>(mat_d, vec_d, numRowsM, vecLength, result_d);
+    } else if (option == 3){
+      int nrows = 4;
+      dim3 nthreads(WARP_SIZE * nrows,1,1);
+      dim3 nblocks((numRowsM + nrows - 1)/nrows,1,1);
+      mvKernelMultRowsSingleThreadBlock<<<nblocks, nthreads>>>(mat_d, vec_d, numRowsM, vecLength, result_d);
+    } else if (option == 4) {
+      int nwarps = 32;
+      int nblocksPerRow = 4;
+      dim3 nthreads(WARP_SIZE * nwarps,1,1);
+      dim3 nblocks(nblocksPerRow * numRowsM,1,1);
+      mvKernelColStrat<<<nblocks, nthreads>>>(mat_d, vec_d, numRowsM, vecLength, result_d);
+    }
     cudaDeviceSynchronize();
     fflush(stdout);
 
     cudaMemcpy(result_h, result_d, numRowsM * sizeof(double), cudaMemcpyDeviceToHost);
-    printf("Result: %f\n", result_h[0]);
-    printf("Result: %f\n", mat_h[0]);
 
     cudaFree(mat_d);
     cudaFree(vec_d);
     cudaFree(result_d);
-}
-
-
-double** generateRandomMatrix(int numRows, int numCols) {
-  double** matrix = new double*[numRows];
-  for (int i = 0; i < numRows; ++i) {
-    matrix[i] = new double[numCols];
-    for (int j = 0; j < numCols; ++j) {
-      matrix[i][j] = 2; //static_cast<double>(rand()) / static_cast<double>(RAND_MAX);
-    }
-  }
-  return matrix;
 }
 
 double** generateRandomMatrixContiguous(int numRows, int numCols) {
@@ -106,7 +217,7 @@ double** generateRandomMatrixContiguous(int numRows, int numCols) {
 
   for (int i = 0; i < numRows; ++i) {
     for (int j = 0; j < numCols; ++j) {
-      matrix[i][j] = static_cast<double>(rand()) / static_cast<double>(RAND_MAX);
+      matrix[i][j] = 2; //static_cast<double>(rand()) / static_cast<double>(RAND_MAX);
     }
   }
   return matrix;
@@ -168,11 +279,11 @@ void saveVector(const char* fileName, double* vector, int numRows) {
 }
 
 
-unsigned long timedMVMult(int numRows, int numCols) {
+unsigned long timedMVMult(int numRows, int numCols, int option) {
 
   srand(0);
 
-  double** matrix = generateRandomMatrix(numRows, numCols);
+  double** matrix = generateRandomMatrixContiguous(numRows, numCols);
   double* vector = generateRandomVector(numCols);
   double result_h[numRows];
 
@@ -184,14 +295,35 @@ unsigned long timedMVMult(int numRows, int numCols) {
 
   gettimeofday(&start, 0);
   
-  matVecMul(&matrix[0][0], vector, result_h, numRowsM, vecLength);
-  saveVector("outputs/result.txt", result_h, numRowsM);
+  matVecMul(&matrix[0][0], vector, result_h, numRowsM, vecLength, option);
+  for (int i = 0; i < numRowsM; i++) {
+        std::cout << result_h[i] << " ";
+    }
+    std::cout << std::endl;
+    printf("NumRowsM: %d\n", numRowsM);
+    printf("VecLength: %d\n", vecLength);
+  // saveVector("outputs/result.txt", result_h, numRowsM);
   gettimeofday(&end, 0);
   
-  deleteMatrix(matrix, numRows);
+  deleteMatrixContiguous(matrix, numRows);
   delete[] vector;
 
   return (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
+}
+
+double meanOfMatrix(double** matrix, int numRows, int numCols) {
+  double sum = 0.0;
+  int count = 0;
+  for (int r = 0; r < numRows; ++r) {
+    for (int c = 0; c < numCols; ++c) {
+      if (std::isfinite(matrix[r][c])) {
+          sum += matrix[r][c];
+          count++;
+      }
+    }
+  }
+  std::cout << "Mean of matrix is: " << sum/(numRows*numCols) << std::endl;
+  return sum/(numRows*numCols);
 }
 
 void saveLatex(const char* fileName, double** times, double** floprate, int numRows, int numCols, bool inclTime=true) {
@@ -217,53 +349,67 @@ void saveLatex(const char* fileName, double** times, double** floprate, int numR
 
       }
     }
-
+    outputFile << "\\hline" << std::endl;
+    outputFile << "Mean floprate " << meanOfMatrix(floprate, numRows, numCols) << std::endl;
     outputFile.close();
     std::cout << "Matrix has been saved to " << fileName << std::endl;
 }
 
-void meanOfMatrix(double** matrix, int numRows, int numCols) {
-  double sum = 0.0;
-  int count = 0;
-  for (int r = 0; r < numRows; ++r) {
-    for (int c = 0; c < numCols; ++c) {
-      if (std::isfinite(matrix[r][c])) {
-          sum += matrix[r][c];
-          count++;
-      }
-    }
-  }
-  std::cout << "Mean of matrix is: " << sum/(numRows*numCols) << std::endl;
-}
 
-int main() {
+
+int main(int argc, char *argv[] ) {
+  // unsigned long elapsed_time = timedMVMult(100, 100, 0);
   double** times = new double*[4];
   double** floprate = new double*[4];
   int rowCount;
   int colCount;
-
-  for (int numRows = 0; numRows < 4; numRows +=1) {
-    times[numRows] = new double[4];
-    floprate[numRows] = new double[4];
-
-    rowCount = std::pow(10,(numRows + 1));
-
-    for (int numCols = 0; numCols < 4; numCols += 1) {
-
-      colCount = std::pow(10,(numCols + 1));
-      unsigned long elapsed_time = timedMVMult(rowCount, colCount);
-      if (elapsed_time == 0) {
-        elapsed_time = 1;
-      }
-      floprate[numRows][numCols] = (2 * rowCount * colCount)/elapsed_time * std::pow(10, -6);
-    }
+  int option = 0;
+  std::string fileName = "outputs/latex_many_rows_single_block.txt";
+  if (argc >= 2) {
+    option = atoi(argv[1]);
+  }
+   if (argc >= 3) {
+    fileName = argv[2];
   }
 
-  meanOfMatrix(floprate, 4, 4);
-  saveLatex("outputs/latex.txt", times, floprate, 4, 4);
+  if (option < 5) {
+    for (int numRows = 0; numRows < 4; numRows +=1) {
+      times[numRows] = new double[4];
+      floprate[numRows] = new double[4];
 
-  deleteMatrix(times, 4);
-  deleteMatrix(floprate, 4);
+      rowCount = std::pow(10,(numRows + 1));
 
+      for (int numCols = 0; numCols < 4; numCols += 1) {
+
+        colCount = std::pow(10,(numCols + 1));
+        unsigned long elapsed_time = timedMVMult(rowCount, colCount, option);
+        if (elapsed_time == 0) {
+          elapsed_time = 1;
+        }
+        times[numRows][numCols] = elapsed_time;
+        floprate[numRows][numCols] = (2 * rowCount * colCount)/elapsed_time * std::pow(10, -6);
+      }
+    }
+
+    meanOfMatrix(floprate, 4, 4);
+    saveLatex(fileName.c_str(), times, floprate, 4, 4);
+
+    deleteMatrix(times, 4);
+    deleteMatrix(floprate, 4);
+
+  } else if (option == 5) {
+    unsigned long elapsed_time_fast = timedMVMult(10, 20000, 2);
+    double floprate_fast = (2 * 10 * 20000)/elapsed_time_fast * std::pow(10, -6);
+    std::ofstream outputFile(fileName);
+    outputFile << "Time fast " << elapsed_time_fast << std::endl;
+    outputFile << "Floprate fast " << floprate_fast << std::endl;
+    
+  } else {
+    unsigned long elapsed_time_slow = timedMVMult(10, 20000, 0);
+    double floprate_slow = (2 * 10 * 20000)/elapsed_time_slow * std::pow(10, -6);
+    std::ofstream outputFile(fileName);
+    outputFile << "Time slow " << elapsed_time_slow << std::endl;
+    outputFile << "Floprate slow " << floprate_slow << std::endl;
+  }
   return 0;
 }

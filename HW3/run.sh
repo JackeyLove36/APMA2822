@@ -18,4 +18,10 @@ module load cuda/12.2.2  gcc/10.2
 
 # Compile CUDA program and run
 nvcc -O2 matrixVectorMult.cu -o matrixVectorMult
+
+if [ $# -ge 2 ]; then
+./matrixVectorMult $1 $2
+echo "hello"
+else 
 ./matrixVectorMult
+fi
