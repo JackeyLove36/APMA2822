@@ -60,13 +60,14 @@ int main(){
   
   dim3 nthreads(256,1,1);
   dim3 nblocks( (N+nthreads.x-1)/nthreads.x,1,1);
-
-  cudaMalloc(&result_d, nblocks.x*sizeof(double));
-  result_h = new double[nblocks.x];
+  
+  cudaHostAlloc((void **)&result_h, nblocks.x*sizeof(double), cudaHostAllocMapped);
+  cudaHostGetDevicePointer((void **)&result_d, (void *)result_h , 0);
+  // result_h = new double[nblocks.x];
 
   dot_product<<<nblocks,nthreads,0,0>>>(x_d, N, result_d);
   cudaDeviceSynchronize();
-  cudaMemcpy(result_h, result_d, nblocks.x*sizeof(double), cudaMemcpyDeviceToHost);
+  // cudaMemcpy(result_h, result_d, nblocks.x*sizeof(double), cudaMemcpyDeviceToHost);
   cudaFree(x_d);
 
   double value = sum_arr(result_h, nblocks.x);
