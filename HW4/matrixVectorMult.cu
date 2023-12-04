@@ -113,8 +113,8 @@ void matVecMul(double* mat_h, double* vec_h, double* result_h, int M, int numRow
 				int offset = i * streamNumRows; // row to start stream at
 				cudaMemcpyAsync(&mat_d[offset*vecLength], &mat_h[offset*vecLength], streamNumRows * vecLength * sizeof(double), cudaMemcpyHostToDevice, streams[i]);
 				// testKernel<<<nblocks, nthreads, 0, streams[i]>>>(&mat_d[offset*vecLength], vec_d, numRowsM, vecLength, i, streamNumRows, &result_d[offset]);
-				mvKernelNoWarp<<<nblocks, nthreads, 0, streams[i]>>>(&mat_d[offset*vecLength], vec_d, numRowsM, vecLength, i, streamNumRows, &result_d[offset]);
-				// mvKernelMultipleWarps<<<nblocks, nthreads, 0, streams[i]>>>(&mat_d[offset*vecLength], vec_d, numRowsM, vecLength, i, streamNumRows, &result_d[offset]);
+				// mvKernelNoWarp<<<nblocks, nthreads, 0, streams[i]>>>(&mat_d[offset*vecLength], vec_d, numRowsM, vecLength, i, streamNumRows, &result_d[offset]);
+				mvKernelMultipleWarps<<<nblocks, nthreads, 0, streams[i]>>>(&mat_d[offset*vecLength], vec_d, numRowsM, vecLength, i, streamNumRows, &result_d[offset]);
 				cudaMemcpyAsync(&result_h[offset], &result_d[offset], streamNumRows * sizeof(double), cudaMemcpyDeviceToHost, streams[i]);
 		}
 		
