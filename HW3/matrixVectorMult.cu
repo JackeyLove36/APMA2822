@@ -304,7 +304,6 @@ unsigned long timedMVMult(int numRows, int numCols, int option) {
     printf("VecLength: %d\n", vecLength);
   // saveVector("outputs/result.txt", result_h, numRowsM);
   gettimeofday(&end, 0);
-  
   deleteMatrixContiguous(matrix, numRows);
   delete[] vector;
 
